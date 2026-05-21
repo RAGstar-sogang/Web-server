@@ -5,7 +5,7 @@ import re
 import json
 
 # ── Config ──────────────────────────────────────────────
-API_BASE = "http://3.34.90.38:8000"
+API_BASE = st.secrets.get("API_BASE", "http://3.34.90.38:8000")
 POLL_INTERVAL = 3  # seconds
 
 LOADING_TIPS = [
