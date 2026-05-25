@@ -106,6 +106,36 @@ header {visibility: hidden;}
 .footer-info { font-size: 12px; color: #B2BEC3; margin-top: 2rem; display: flex; justify-content: space-between; }
 .dashed-divider { border-top: 2px dashed #DFE6E9; margin: 1.5rem 0; }
 
+/* v2: Model comparison cards */
+.model-card {
+    background: #FAFBFC; border: 1px solid #DFE6E9; border-radius: 8px;
+    padding: 20px 24px;
+}
+.model-card-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #DFE6E9;
+}
+.model-card-label { font-size: 15px; font-weight: 700; color: #2D3436; }
+.model-card-latency { font-size: 12px; color: #B2BEC3; }
+.model-card-row { display: flex; gap: 12px; margin-bottom: 10px; }
+.model-card-field {
+    flex: 1; background: #F0F3F5; border-radius: 6px; padding: 8px 12px;
+}
+.model-card-field-label { font-size: 10px; color: #B2BEC3; text-transform: uppercase; margin-bottom: 2px; }
+.model-card-field-value { font-size: 14px; font-weight: 600; color: #2D3436; }
+.model-card-field-value-green { font-size: 14px; font-weight: 600; color: #00B894; }
+.model-card-section { margin-top: 12px; }
+.model-card-section-title { font-size: 12px; color: #636E72; font-weight: 600; margin-bottom: 6px; }
+.model-card-text { font-size: 13px; color: #2D3436; line-height: 1.7; }
+.model-card-empty { text-align: center; padding: 2rem 0; color: #B2BEC3; font-size: 13px; }
+.severity-high { background: #D63031; color: white; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+.severity-medium { background: #E17055; color: white; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+.severity-low { background: #868E96; color: white; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+.severity-unknown { background: #B2BEC3; color: white; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+.action-list { margin: 0; padding: 0; list-style: none; }
+.action-list li { font-size: 13px; color: #2D3436; line-height: 1.8; }
+.action-list li::before { content: "- "; color: #00B894; font-weight: 600; }
+
 /* Button overrides */
 .stButton button {
     font-family: 'JetBrains Mono', monospace !important;
@@ -131,7 +161,8 @@ for key, val in {
     "elapsed": None,
     "polling": False,
     "poll_start": None,
-    "analyze_requested": False,
+    "analyze_submitted": False,
+    "_clear_step": 0,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = val
@@ -145,6 +176,141 @@ def check_api():
         return r.status_code == 200
     except Exception:
         return False
+
+
+# ── v2 helpers ─────────────────────────────────────────
+def format_latency(ms):
+    if ms is None:
+        return ""
+    if ms < 1000:
+        return f"{ms}ms"
+    return f"{ms / 1000:.1f}s"
+
+
+def severity_badge(severity):
+    if not severity:
+        return ""
+    cls = {
+        "HIGH": "severity-high",
+        "MEDIUM": "severity-medium",
+        "LOW": "severity-low",
+    }.get(severity.upper(), "severity-unknown")
+    return f'<span class="{cls}">{severity}</span>'
+
+
+def format_gpt_label(model_str):
+    if not model_str:
+        return "GPT-5.2"
+    return model_str.upper() if model_str.lower().startswith("gpt") else model_str
+
+
+def _highlight_text(text):
+    if not text:
+        return ""
+    esc = str(text).replace("<", "&lt;").replace(">", "&gt;")
+    for kw in ["memory.max", "memory.high", "cgroup", "OOM Killer", "oom-killer", "oom_kill"]:
+        esc = esc.replace(kw, f'<span class="highlight">{kw}</span>')
+    return esc
+
+
+def render_model_card(label_text, model_data):
+    if model_data is None:
+        st.markdown(
+            f'<div class="model-card">'
+            f'<div class="model-card-header"><span class="model-card-label">{label_text}</span></div>'
+            f'<div class="model-card-empty">응답 없음</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    oom_type = model_data.get("oom_type", "N/A")
+    confidence = model_data.get("confidence")
+    conf_str = f"{int(confidence * 100)}%" if isinstance(confidence, (int, float)) else "N/A"
+    constraint = (model_data.get("constraint_type") or "").replace("CONSTRAINT_", "") or None
+    severity = model_data.get("severity")
+    latency = model_data.get("latency_ms")
+    root_cause = model_data.get("root_cause", "")
+    evidence = model_data.get("evidence")
+    action_guide = model_data.get("action_guide") or {}
+    immediate = action_guide.get("immediate", [])
+    recommended = action_guide.get("recommended", [])
+
+    latency_html = f'<span class="model-card-latency">{format_latency(latency)}</span>' if latency else ""
+    sev_html = severity_badge(severity) if severity else ""
+
+    # Top fields row
+    fields_html = (
+        f'<div class="model-card-row">'
+        f'<div class="model-card-field"><div class="model-card-field-label">OOM TYPE</div>'
+        f'<div class="model-card-field-value-green">{oom_type}</div></div>'
+        f'<div class="model-card-field"><div class="model-card-field-label">CONFIDENCE</div>'
+        f'<div class="model-card-field-value">{conf_str}</div></div>'
+    )
+    if constraint:
+        fields_html += (
+            f'<div class="model-card-field"><div class="model-card-field-label">CONSTRAINT</div>'
+            f'<div class="model-card-field-value">{constraint}</div></div>'
+        )
+    if severity:
+        fields_html += (
+            f'<div class="model-card-field"><div class="model-card-field-label">SEVERITY</div>'
+            f'<div class="model-card-field-value">{sev_html}</div></div>'
+        )
+    fields_html += '</div>'
+
+    # Root cause
+    rc_html = ""
+    if root_cause:
+        rc_html = (
+            f'<div class="model-card-section">'
+            f'<div class="model-card-section-title">// ROOT CAUSE</div>'
+            f'<div class="model-card-text">{_highlight_text(root_cause)}</div>'
+            f'</div>'
+        )
+
+    # Evidence
+    ev_html = ""
+    if evidence:
+        ev_html = (
+            f'<div class="model-card-section">'
+            f'<div class="model-card-section-title">// EVIDENCE</div>'
+            f'<div class="model-card-text">{_highlight_text(evidence)}</div>'
+            f'</div>'
+        )
+
+    # Action guide: immediate
+    imm_html = ""
+    if immediate:
+        items = "".join(f"<li>{str(a).replace('<', '&lt;').replace('>', '&gt;')}</li>" for a in immediate)
+        imm_html = (
+            f'<div class="model-card-section">'
+            f'<div class="model-card-section-title">// IMMEDIATE</div>'
+            f'<ul class="action-list">{items}</ul>'
+            f'</div>'
+        )
+
+    # Action guide: recommended
+    rec_html = ""
+    if recommended:
+        items = "".join(f"<li>{str(a).replace('<', '&lt;').replace('>', '&gt;')}</li>" for a in recommended)
+        rec_html = (
+            f'<div class="model-card-section">'
+            f'<div class="model-card-section-title">// RECOMMENDED</div>'
+            f'<ul class="action-list">{items}</ul>'
+            f'</div>'
+        )
+
+    st.markdown(
+        f'<div class="model-card">'
+        f'<div class="model-card-header">'
+        f'<span class="model-card-label">{label_text}</span>'
+        f'{latency_html}'
+        f'</div>'
+        f'{fields_html}{rc_html}{ev_html}{imm_html}{rec_html}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ══════════════════════════════════════════════════════════
@@ -192,72 +358,82 @@ has_meta = any([server_info, service, recent_changes])
 
 
 # ══════════════════════════════════════════════════════════
-# INPUT — DMESG LOG
+# INPUT — DMESG LOG + BUTTONS (form: 한 번 클릭으로 값+액션 동시 전달)
 # ══════════════════════════════════════════════════════════
+
+# CLEAR 2단계: 위젯 생성 전에 session state 비워야 에러 안 남
+if st.session_state._clear_step == 2:
+    st.session_state._clear_step = 0
+    st.session_state.raw_log_input = ""
+
 st.markdown("""
 <div class="section-label">
     <span>// INPUT &mdash; DMESG LOG</span>
 </div>
 """, unsafe_allow_html=True)
 
-# ★ widget 먼저 생성, 그 다음에 값 사용
-raw_log = st.text_area(
-    "DMESG Log",
-    height=220,
-    placeholder="여기에 dmesg 로그를 붙여넣으세요...",
-    label_visibility="collapsed",
-)
+with st.form("analyze_form", clear_on_submit=False, border=False):
+    raw_log = st.text_area(
+        "DMESG Log",
+        height=220,
+        placeholder="여기에 dmesg 로그를 붙여넣으세요...",
+        label_visibility="collapsed",
+        key="raw_log_input",
+    )
 
-# Stats (widget 생성 이후에 값 읽기)
-if raw_log and raw_log.strip():
-    line_count = len(raw_log.strip().split("\n"))
-    byte_size = len(raw_log.encode("utf-8"))
-    size_str = f"{byte_size / 1024:.1f} KB" if byte_size >= 1024 else f"{byte_size} B"
-    st.caption(f"{line_count} lines · {size_str}")
+    if raw_log and raw_log.strip():
+        line_count = len(raw_log.strip().split("\n"))
+        byte_size = len(raw_log.encode("utf-8"))
+        size_str = f"{byte_size / 1024:.1f} KB" if byte_size >= 1024 else f"{byte_size} B"
+        st.caption(f"{line_count} lines · {size_str}")
 
-
-# ══════════════════════════════════════════════════════════
-# BUTTONS
-# ══════════════════════════════════════════════════════════
-def _on_analyze_click():
-    st.session_state.analyze_requested = True
-
-col_btn1, col_btn2, col_btn3 = st.columns([2, 1.5, 5])
-with col_btn1:
-    st.button("▶  ANALYZE", type="primary", use_container_width=True, on_click=_on_analyze_click)
-with col_btn2:
-    clear_clicked = st.button("CLEAR", type="secondary", use_container_width=True)
-
-if st.session_state.elapsed is not None:
-    with col_btn3:
-        st.markdown(
-            f'<div class="elapsed" style="padding-top:8px;">'
-            f'elapsed: <span style="color:#00B894">{st.session_state.elapsed:.2f}s</span>'
-            f"</div>",
-            unsafe_allow_html=True,
+    col_btn1, col_btn2, col_btn3 = st.columns([2, 1.5, 5])
+    with col_btn1:
+        analyze_submitted = st.form_submit_button(
+            "▶  ANALYZE", type="primary", use_container_width=True
         )
+    with col_btn2:
+        clear_submitted = st.form_submit_button(
+            "CLEAR", use_container_width=True
+        )
+
+    if st.session_state.elapsed is not None:
+        with col_btn3:
+            st.markdown(
+                f'<div class="elapsed" style="padding-top:8px;">'
+                f'elapsed: <span style="color:#00B894">{st.session_state.elapsed:.2f}s</span>'
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
 
 # ══════════════════════════════════════════════════════════
 # CLEAR
 # ══════════════════════════════════════════════════════════
-if clear_clicked:
-    st.session_state.diagnosis_id = None
-    st.session_state.result = None
-    st.session_state.status = None
-    st.session_state.error = None
-    st.session_state.elapsed = None
-    st.session_state.polling = False
-    st.session_state.poll_start = None
-    st.session_state.analyze_requested = False
-    st.rerun()
+if clear_submitted:
+    if st.session_state._clear_step == 0:
+        # 1번째: 분석 중지 + 결과 초기화
+        st.session_state.diagnosis_id = None
+        st.session_state.result = None
+        st.session_state.status = None
+        st.session_state.error = None
+        st.session_state.elapsed = None
+        st.session_state.polling = False
+        st.session_state.poll_start = None
+        st.session_state.analyze_submitted = False
+        st.session_state._clear_step = 1
+        st.rerun()
+    else:
+        # 2번째: 다음 rerun에서 위젯 생성 전에 내용 삭제
+        st.session_state._clear_step = 2
+        st.rerun()
 
 
 # ══════════════════════════════════════════════════════════
 # ANALYZE — POST to backend
 # ══════════════════════════════════════════════════════════
-if st.session_state.analyze_requested and st.session_state.diagnosis_id is None:
-    st.session_state.analyze_requested = False
+if analyze_submitted and st.session_state.diagnosis_id is None:
+    st.session_state._clear_step = 0
     # 1. 입력값 검증
     if not raw_log or not raw_log.strip():
         st.error("DMESG 로그를 입력해주세요.")
@@ -400,10 +576,11 @@ elif st.session_state.polling and st.session_state.diagnosis_id:
         st.session_state.polling = False
         st.rerun()
 
-# ── Result ──────────────────────────────────────────────
+# ── Result (v2: ours/gpt 비교) ─────────────────────────
 elif st.session_state.result:
     data = st.session_state.result
-    result_data = data.get("result", data)
+    ours_data = data.get("ours")
+    gpt_data = data.get("gpt")
 
     st.markdown("""
     <div class="section-label">
@@ -412,49 +589,13 @@ elif st.session_state.result:
     </div>
     """, unsafe_allow_html=True)
 
-    # Cards
-    oom_type = result_data.get("oom_type", "N/A")
-    constraint = result_data.get("constraint_type", result_data.get("constraint", "N/A"))
-    confidence = result_data.get("confidence", "N/A")
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown(f'<div class="result-card"><div class="card-label">OOM_TYPE</div><div class="card-value">{oom_type}</div></div>', unsafe_allow_html=True)
-    with c2:
-        st.markdown(f'<div class="result-card"><div class="card-label">CONSTRAINT</div><div class="card-value-dark">{constraint}</div></div>', unsafe_allow_html=True)
-    with c3:
-        conf_str = f'{confidence:.2f} <span class="confidence-sub">/ 1.00</span>' if isinstance(confidence, (int, float)) else str(confidence)
-        st.markdown(f'<div class="result-card"><div class="card-label">CONFIDENCE</div><div class="card-value-dark">{conf_str}</div></div>', unsafe_allow_html=True)
-
-    # Root Cause
-    root_cause = result_data.get("root_cause", "")
-    if root_cause:
-        dc = root_cause.replace("<", "&lt;").replace(">", "&gt;")
-        for t in ["memory.max", "memory.high", "cgroup", "OOM Killer", "oom-killer", "oom_kill"]:
-            dc = dc.replace(t, f'<span class="highlight">{t}</span>')
-        st.markdown(f'<div class="cause-box"><div class="box-title">\u25B6 ROOT CAUSE</div><div class="box-content">{dc}</div></div>', unsafe_allow_html=True)
-
-    # Action Guide
-    actions = result_data.get("action_guide", result_data.get("actions", []))
-    if actions:
-        ah = ""
-        for i, a in enumerate(actions, 1):
-            at = str(a).replace("<", "&lt;").replace(">", "&gt;")
-            at = re.sub(r"(--\w+)", r'<span class="highlight">\1</span>', at)
-            ah += f'<div class="action-item"><span class="action-num">{i:02d}</span><span>{at}</span></div>'
-        st.markdown(f'<div class="cause-box"><div class="box-title">\u25B6 ACTION GUIDE</div><div class="box-content">{ah}</div></div>', unsafe_allow_html=True)
-
-    # Footer
-    chunks = result_data.get("retrieved_chunks", result_data.get("chunks_count", ""))
-    top_score = result_data.get("top_score", "")
-    meta_filter = "on" if has_meta else "off"
-    fp = []
-    if chunks:
-        fp.append(f"retrieved <b>{chunks}</b> chunks from KB")
-    if top_score:
-        fp.append(f"top score: <b>{top_score}</b>")
-    fp.append(f'metadata filter: <span style="color:#00B894">{meta_filter}</span>')
-    st.markdown(f'<div class="footer-info"><span>// {" · ".join(fp)}</span></div>', unsafe_allow_html=True)
+    # 좌/우 비교 카드
+    col_left, col_right = st.columns(2)
+    with col_left:
+        render_model_card("RAGstar", ours_data)
+    with col_right:
+        gpt_label = format_gpt_label(gpt_data.get("model") if gpt_data else None)
+        render_model_card(gpt_label, gpt_data)
 
 # ── Idle ────────────────────────────────────────────────
 else:
