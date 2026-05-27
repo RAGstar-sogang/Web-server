@@ -88,7 +88,14 @@ st.markdown("""
     font-family: 'JetBrains Mono', 'SF Mono', Monaco, Consolas, monospace !important;
 }
 
-#MainMenu {visibility: hidden;}
+#MainMenu,
+[data-testid="stToolbar"],
+[data-testid="stMainMenu"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"] {
+    visibility: hidden !important;
+    display: none !important;
+}
 footer {visibility: hidden;}
 header {visibility: hidden;}
 
@@ -242,13 +249,19 @@ for key, val in {
 
 
 # ── API health ──────────────────────────────────────────
-@st.cache_data(ttl=30)
+# session_state로 직접 30초 TTL 캐싱 (@st.cache_data 미사용 → "Clear cache" 메뉴 제거)
 def check_api():
+    now = time.time()
+    cache = st.session_state.get("_api_check_cache")
+    if cache and now - cache["ts"] < 30:
+        return cache["result"]
     try:
         r = requests.get(f"{API_BASE}/docs", timeout=3)
-        return r.status_code == 200
+        result = r.status_code == 200
     except Exception:
-        return False
+        result = False
+    st.session_state["_api_check_cache"] = {"ts": now, "result": result}
+    return result
 
 
 # ── v2 helpers ─────────────────────────────────────────
