@@ -8,6 +8,60 @@ import json
 API_BASE = st.secrets.get("API_BASE", "http://3.34.90.38:8000")
 POLL_INTERVAL = 3  # seconds
 
+# ── Placeholder examples ────────────────────────────────
+SERVER_INFO_EXAMPLE = """Ubuntu 22.04 LTS, Kernel 5.15.0-105-generic, 32GB RAM, swap disabled
+Kubernetes worker node v1.29.0, containerd 1.7.13, cgroup v2 unified"""
+
+SERVICE_EXAMPLE = """payments-api v3.1.0 (Go 1.21.5, gRPC + Gin HTTP), single statically-linked binary
+Pod limits: memory=2Gi, requests=1Gi (Burstable QoS)
+ENV: GOGC=100 (default), GOMEMLIMIT not set, GOMAXPROCS=4
+Replicas: 8, ingress traffic balanced via L7"""
+
+RECENT_CHANGES_EXAMPLE = """- Go runtime upgraded from 1.20.12 to 1.21.5 last week (security patches)
+- Inbound RPS up ~50% over baseline (new mobile client rollout)
+- Added in-memory response cache (sync.Map, no eviction policy) 6 days ago
+- Pod memory limit unchanged (still 2Gi)
+- pprof shows in-use heap ~1.3GB but RSS reaches 2.0GB before OOM"""
+
+DMESG_EXAMPLE = """[456789.234567] api-server invoked oom-killer: gfp_mask=0xcc0(GFP_KERNEL), order=0, oom_score_adj=994
+[456789.234589] CPU: 5 PID: 67890 Comm: api-server Not tainted 5.15.0-105-generic #115-Ubuntu
+[456789.234612] Call Trace:
+[456789.234623]  <TASK>
+[456789.234634]  dump_stack_lvl+0x4a/0x63
+[456789.234656]  dump_header+0x4f/0x1f6
+[456789.234678]  oom_kill_process.cold+0xb/0x10
+[456789.234701]  out_of_memory+0x1cf/0x520
+[456789.234723]  mem_cgroup_out_of_memory+0x13a/0x150
+[456789.234745]  try_charge_memcg+0x49b/0x540
+[456789.234767]  __mem_cgroup_charge+0x29/0x90
+[456789.234789]  do_anonymous_page+0x126/0x3d0
+[456789.234812]  handle_pte_fault+0x1ab/0x230
+[456789.234834]  __handle_mm_fault+0x614/0x6f0
+[456789.234856]  handle_mm_fault+0xfd/0x320
+[456789.234878]  do_user_addr_fault+0x1aa/0x680
+[456789.234901]  exc_page_fault+0x70/0x170
+[456789.234923]  asm_exc_page_fault+0x22/0x30
+[456789.234945] memory: usage 2097152kB, limit 2097152kB, failcnt 287
+[456789.234967] swap: usage 0kB, limit 0kB, failcnt 0
+[456789.234989] Memory cgroup stats for /kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod9e8f7c.slice:
+[456789.235012]  anon 2086543360
+[456789.235023]  file 1572864
+[456789.235034]  kernel 6291456
+[456789.235045]  kernel_stack 262144
+[456789.235056]  pagetables 4194304
+[456789.235067]  shmem 0
+[456789.235089] memory.events:
+[456789.235101]  low 0
+[456789.235112]  high 0
+[456789.235123]  max 287
+[456789.235134]  oom 1
+[456789.235145]  oom_kill 1
+[456789.235167] Tasks state (memory values in pages):
+[456789.235189] [  pid  ]   uid  tgid total_vm      rss pgtables_bytes swapents oom_score_adj name
+[456789.235212] [  67890]  1000 67890   821456   519234      4194304        0           994 api-server
+[456789.235245] oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=/,mems_allowed=0,oom_memcg=/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod9e8f7c.slice,task_memcg=/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod9e8f7c.slice,task=api-server,pid=67890,uid=1000
+[456789.235278] Memory cgroup out of memory: Killed process 67890 (api-server) total-vm:3285824kB, anon-rss:2076936kB, file-rss:0kB, shmem-rss:0kB, UID:1000 pgtables:4194304 oom_score_adj:994"""
+
 LOADING_TIPS = [
     "OOM의 70% 이상은 Swap 미설정 + 단일 프로세스 과점유 조합에서 발생합니다. free -m으로 SwapTotal부터 확인해보세요.",
     "cgroup_oom은 컨테이너의 memory.limit 초과 시 발생합니다. /sys/fs/cgroup/memory.max 또는 docker stats로 한도를 점검해보세요.",
@@ -337,43 +391,37 @@ st.markdown(
 )
 
 
-# ══════════════════════════════════════════════════════════
-# INPUT — METADATA
-# ══════════════════════════════════════════════════════════
-st.markdown("""
-<div class="section-label">
-    <span>// INPUT &mdash; METADATA <span style="color:#B2BEC3">(optional &middot; 검색 품질 향상)</span></span>
-    <span class="section-label-right">3 fields</span>
-</div>
-""", unsafe_allow_html=True)
-
-server_info = st.text_input("[Server Info]", placeholder="예: Ubuntu 22.04, Kernel 5.15, 32GB RAM")
-service = st.text_input("[Service]", placeholder="예: payment-api v2.3.1 (deployed 2 days ago)")
-recent_changes = st.text_input("[Recent Changes]", placeholder="예: Increased JVM heap from 4G to 8G")
-
-has_meta = any([server_info, service, recent_changes])
-
-
-# ══════════════════════════════════════════════════════════
-# INPUT — DMESG LOG + BUTTONS (form: 한 번 클릭으로 값+액션 동시 전달)
-# ══════════════════════════════════════════════════════════
-
 # CLEAR 2단계: 위젯 생성 전에 session state 비워야 에러 안 남
 if st.session_state._clear_step == 2:
     st.session_state._clear_step = 0
     st.session_state.raw_log_input = ""
 
-st.markdown("""
-<div class="section-label">
-    <span>// INPUT &mdash; DMESG LOG</span>
-</div>
-""", unsafe_allow_html=True)
-
+# ══════════════════════════════════════════════════════════
+# INPUT FORM — METADATA + DMESG LOG + BUTTONS
+# (모든 위젯을 폼 안에 두어 ANALYZE 한 번에 모든 값이 같이 제출됨)
+# ══════════════════════════════════════════════════════════
 with st.form("analyze_form", clear_on_submit=False, border=False):
+    st.markdown("""
+    <div class="section-label">
+        <span>// INPUT &mdash; METADATA <span style="color:#B2BEC3">(optional &middot; 검색 품질 향상)</span></span>
+        <span class="section-label-right">3 fields</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    server_info = st.text_area("[Server Info]", placeholder=SERVER_INFO_EXAMPLE, height=68)
+    service = st.text_area("[Service]", placeholder=SERVICE_EXAMPLE, height=110)
+    recent_changes = st.text_area("[Recent Changes]", placeholder=RECENT_CHANGES_EXAMPLE, height=130)
+
+    st.markdown("""
+    <div class="section-label">
+        <span>// INPUT &mdash; DMESG LOG</span>
+    </div>
+    """, unsafe_allow_html=True)
+
     raw_log = st.text_area(
         "DMESG Log",
         height=220,
-        placeholder="여기에 dmesg 로그를 붙여넣으세요...",
+        placeholder=DMESG_EXAMPLE,
         label_visibility="collapsed",
         key="raw_log_input",
     )
