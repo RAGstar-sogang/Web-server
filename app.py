@@ -202,6 +202,25 @@ header {visibility: hidden;}
 
 textarea { font-family: 'JetBrains Mono', monospace !important; font-size: 13px !important; }
 input { font-family: 'JetBrains Mono', monospace !important; font-size: 13px !important; }
+
+/* 더 흐릿한 placeholder */
+textarea::placeholder,
+input::placeholder {
+    color: #CFD4DA !important;
+    opacity: 0.55 !important;
+}
+textarea::-webkit-input-placeholder,
+input::-webkit-input-placeholder { color: #CFD4DA !important; opacity: 0.55 !important; }
+textarea::-moz-placeholder,
+input::-moz-placeholder { color: #CFD4DA !important; opacity: 0.55 !important; }
+
+/* "Press Ctrl+Enter to apply" 같은 입력 안내 텍스트 숨김 */
+[data-testid="InputInstructions"],
+[data-testid="stWidgetInstructions"],
+.stTextArea div[data-baseweb="textarea"] + div small,
+.stTextInput div[data-baseweb="input"] + div small {
+    display: none !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -479,10 +498,12 @@ if clear_submitted:
 # ══════════════════════════════════════════════════════════
 if analyze_submitted and st.session_state.diagnosis_id is None:
     st.session_state._clear_step = 0
-    # 1. 입력값 검증
-    if not raw_log or not raw_log.strip():
-        st.error("DMESG 로그를 입력해주세요.")
-        st.stop()
+
+    # 1. 빈 필드는 placeholder 예시값으로 폴백 (회색으로 보이던 그 값을 그대로 사용)
+    effective_log = raw_log.strip() if raw_log and raw_log.strip() else DMESG_EXAMPLE
+    effective_server_info = server_info.strip() if server_info and server_info.strip() else SERVER_INFO_EXAMPLE
+    effective_service = service.strip() if service and service.strip() else SERVICE_EXAMPLE
+    effective_recent_changes = recent_changes.strip() if recent_changes and recent_changes.strip() else RECENT_CHANGES_EXAMPLE
 
     # 2. 이전 상태 초기화
     st.session_state.result = None
@@ -490,18 +511,16 @@ if analyze_submitted and st.session_state.diagnosis_id is None:
     st.session_state.elapsed = None
     st.session_state.poll_start = time.time()
 
-    # 3. 메타데이터 조립
-    metadata = {}
-    if server_info:
-        metadata["server_info"] = server_info
-    if service:
-        metadata["service"] = service
-    if recent_changes:
-        metadata["recent_changes"] = recent_changes
+    # 3. 메타데이터 조립 (폴백 적용된 값 사용)
+    metadata = {
+        "server_info": effective_server_info,
+        "service": effective_service,
+        "recent_changes": effective_recent_changes,
+    }
 
     payload = {
-        "raw_log": raw_log.strip(),
-        "metadata": metadata if metadata else None,
+        "raw_log": effective_log,
+        "metadata": metadata,
         "source": "paste",
     }
 
