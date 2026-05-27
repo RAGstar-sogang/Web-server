@@ -229,14 +229,12 @@ def render_model_card(label_text, model_data):
     conf_str = f"{int(confidence * 100)}%" if isinstance(confidence, (int, float)) else "N/A"
     constraint = (model_data.get("constraint_type") or "").replace("CONSTRAINT_", "") or None
     severity = model_data.get("severity")
-    latency = model_data.get("latency_ms")
     root_cause = model_data.get("root_cause", "")
     evidence = model_data.get("evidence")
     action_guide = model_data.get("action_guide") or {}
     immediate = action_guide.get("immediate", [])
     recommended = action_guide.get("recommended", [])
 
-    latency_html = f'<span class="model-card-latency">{format_latency(latency)}</span>' if latency else ""
     sev_html = severity_badge(severity) if severity else ""
 
     # Top fields row
@@ -305,7 +303,6 @@ def render_model_card(label_text, model_data):
         f'<div class="model-card">'
         f'<div class="model-card-header">'
         f'<span class="model-card-label">{label_text}</span>'
-        f'{latency_html}'
         f'</div>'
         f'{fields_html}{rc_html}{ev_html}{imm_html}{rec_html}'
         f'</div>',
